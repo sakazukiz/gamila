@@ -46,11 +46,11 @@ jobs:
               anchor = "#include <unistd.h>"
               if anchor not in s:
                   raise SystemExit("Cannot locate unistd include in win32_compat.c")
-              s = s.replace(anchor, anchor + "\\n#if defined(__ANDROID__)\\n#include <sys/syscall.h>\\n#include <linux/memfd.h>\\n#endif", 1)
+              s = s.replace(anchor, anchor + "\n#if defined(__ANDROID__)\n#include <sys/syscall.h>\n#include <linux/memfd.h>\n#endif", 1)
           start = s.find("static int anon_map_fd(const char *name)")
           if start < 0:
               raise SystemExit("anon_map_fd function not found")
-          end_marker = "\\nHANDLE CreateFileMappingA"
+          end_marker = "\nHANDLE CreateFileMappingA"
           end = s.find(end_marker, start)
           if end < 0:
               raise SystemExit("CreateFileMappingA boundary not found")
