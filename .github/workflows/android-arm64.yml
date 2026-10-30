@@ -1,0 +1,86 @@
+name: Build NFSU2 Android ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'NFSU2-Android-*.part*'
+      - 'GITHUB_ACTIONS_BUILD.yml'
+      - '.github/workflows/android-arm64.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout build bootstrap
+        uses: actions/checkout@v4
+
+      - name: Reassemble project archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          parts=(NFSU2-Android-*.part*)
+          if (( ${#parts[@]} < 2 )); then
+            echo "Expected the two NFSU2 archive parts in the repository root."
+            exit 1
+          fi
+          cat "${parts[@]}" > NFSU2-Android-SDL-Integration-Stage.zip
+          unzip -t NFSU2-Android-SDL-Integration-Stage.zip
+          unzip -q NFSU2-Android-SDL-Integration-Stage.zip -d "$RUNNER_TEMP/nfsu2"
+          echo "PROJECT_DIR=$RUNNER_TEMP/nfsu2/nfsu2-android-work2" >> "$GITHUB_ENV"
+
+      - name: Verify Android toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-}"
+          test -d "${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(find "$SDK/cmdline-tools" -name sdkmanager -type f | head -n1)"
+          fi
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.3.13750724"
+          test -d "$SDK/ndk/27.3.13750724"
+          echo "ANDROID_NDK_HOME=$SDK/ndk/27.3.13750724" >> "$GITHUB_ENV"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+          gradle --no-daemon -p android :app:assembleDebug --stacktrace
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          ls -lh "$APK"
+          file "$APK"
+
+      - name: Upload APK and build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NFSU2-Android-ARM64
+          path: |
+            ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/*.apk
+            ${{ env.PROJECT_DIR }}/android/app/build/outputs/logs/**
+          if-no-files-found: warn
+          retention-days: 14
+          
