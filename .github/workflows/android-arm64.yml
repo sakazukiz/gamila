@@ -89,6 +89,71 @@ jobs:
           print("Patched", p)
           PY
 
+      - name: Add Android game-folder access
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PROJECT_DIR" <<'PY'
+          import pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          manifest = root / "android/app/src/main/AndroidManifest.xml"
+          m = manifest.read_text()
+          perm = '    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />'
+          if "MANAGE_EXTERNAL_STORAGE" not in m:
+              m = m.replace('    <uses-permission android:name="android.permission.INTERNET" />',
+                            '    <uses-permission android:name="android.permission.INTERNET" />\\n' + perm)
+          m = m.replace('android:name="org.libsdl.app.SDLActivity"',
+                        'android:name="com.nfsu2.recomp.NFSU2Activity"')
+          manifest.write_text(m)
+          java = root / "android/app/src/main/java/com/nfsu2/recomp/NFSU2Activity.java"
+          java.parent.mkdir(parents=True, exist_ok=True)
+          java.write_text("""package com.nfsu2.recomp;
+          import android.app.AlertDialog;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.os.Environment;
+          import android.provider.Settings;
+          import org.libsdl.app.SDLActivity;
+          public class NFSU2Activity extends SDLActivity {
+              @Override protected void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
+                      new AlertDialog.Builder(this)
+                          .setTitle("Akses folder game diperlukan")
+                          .setMessage("Izinkan akses semua file agar NFSU2 dapat membaca /storage/emulated/0/NFSU2/default.xbe. Setelah memberi izin, buka ulang game.")
+                          .setCancelable(false)
+                          .setPositiveButton("Buka pengaturan", (d, w) -> {
+                              Intent i = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                  Uri.parse("package:" + getPackageName()));
+                              startActivity(i);
+                          })
+                          .setNegativeButton("Nanti", (d, w) -> {})
+                          .show();
+                  }
+              }
+          }
+          """)
+          main = root / "src/main.c"
+          s = main.read_text()
+          old = '    if (!game_dir || !game_dir[0])\\n        game_dir = NFSU2_DEFAULT_GAME_DIR;'
+          new = '''    if (!game_dir || !game_dir[0]) {
+          #if defined(__ANDROID__)
+              if (access("/storage/emulated/0/NFSU2/default.xbe", R_OK) == 0)
+                  game_dir = "/storage/emulated/0/NFSU2";
+              else
+          #endif
+                  game_dir = NFSU2_DEFAULT_GAME_DIR;
+          }'''
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif '"/storage/emulated/0/NFSU2/default.xbe"' not in s:
+              raise SystemExit("Could not locate Android game directory fallback in src/main.c")
+          main.write_text(s)
+          print("Added MANAGE_EXTERNAL_STORAGE prompt and /NFSU2 lookup")
+          PY
+
       - name: Verify Android toolchain
         shell: bash
         run: |
