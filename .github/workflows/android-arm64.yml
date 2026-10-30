@@ -34,6 +34,61 @@ jobs:
           unzip -q NFSU2-Android-SDL-Integration-Stage.zip -d "$RUNNER_TEMP/nfsu2"
           echo "PROJECT_DIR=$RUNNER_TEMP/nfsu2/nfsu2-android-work2" >> "$GITHUB_ENV"
 
+      - name: Patch Android shared-memory compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PROJECT_DIR/xboxrecomp/src/platform/win32_compat.c" <<'PY'
+          import pathlib, re, sys
+          p = pathlib.Path(sys.argv[1])
+          s = p.read_text()
+          if "#include <linux/memfd.h>" not in s:
+              anchor = "#include <unistd.h>"
+              if anchor not in s:
+                  raise SystemExit("Cannot locate unistd include in win32_compat.c")
+              s = s.replace(anchor, anchor + "\\n#if defined(__ANDROID__)\\n#include <sys/syscall.h>\\n#include <linux/memfd.h>\\n#endif", 1)
+          start = s.find("static int anon_map_fd(const char *name)")
+          if start < 0:
+              raise SystemExit("anon_map_fd function not found")
+          end_marker = "\\nHANDLE CreateFileMappingA"
+          end = s.find(end_marker, start)
+          if end < 0:
+              raise SystemExit("CreateFileMappingA boundary not found")
+          replacement = """static int anon_map_fd(const char *name)
+          {
+          #if defined(__ANDROID__)
+              /* Bionic does not expose shm_open; use Linux memfd syscall. */
+          #ifndef SYS_memfd_create
+          #ifdef __NR_memfd_create
+          #define SYS_memfd_create __NR_memfd_create
+          #endif
+          #endif
+          #ifdef SYS_memfd_create
+              return (int)syscall(SYS_memfd_create, name ? name : "xbox_map", MFD_CLOEXEC);
+          #else
+              errno = ENOSYS;
+              return -1;
+          #endif
+          #elif defined(__APPLE__)
+              static volatile LONG map_counter = 0;
+              char shm_name[64];
+              LONG seq = InterlockedIncrement(&map_counter);
+              snprintf(shm_name, sizeof(shm_name), "/nfsu2_map_%ld_%ld",
+                       (long)getpid(), (long)seq);
+              int fd = shm_open(shm_name, O_CREAT | O_RDWR | O_EXCL, 0600);
+              if (fd >= 0) shm_unlink(shm_name);
+              (void)name;
+              return fd;
+          #else
+              return memfd_create(name ? name : "xbox_map", 0);
+          #endif
+          }
+          """
+          s = s[:start] + replacement + s[end:]
+          p.write_text(s)
+          print("Patched", p)
+          PY
+
       - name: Verify Android toolchain
         shell: bash
         run: |
