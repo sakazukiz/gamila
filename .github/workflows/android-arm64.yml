@@ -47,7 +47,16 @@ jobs:
             SDKMANAGER="$(find "$SDK/cmdline-tools" -name sdkmanager -type f | head -n1)"
           fi
           test -n "$SDKMANAGER"
+          # sdkmanager may close stdin after accepting licenses; `yes` then
+          # exits with SIGPIPE. Capture sdkmanager's status, not `yes` status.
+          set +e
           yes | "$SDKMANAGER" --licenses >/dev/null
+          sdkmanager_status=${PIPESTATUS[1]}
+          set -e
+          if [[ "$sdkmanager_status" -ne 0 ]]; then
+            echo "sdkmanager --licenses failed with exit code $sdkmanager_status"
+            exit "$sdkmanager_status"
+          fi
           "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1" "ndk;27.3.13750724"
           test -d "$SDK/ndk/27.3.13750724"
           echo "ANDROID_NDK_HOME=$SDK/ndk/27.3.13750724" >> "$GITHUB_ENV"
@@ -83,4 +92,3 @@ jobs:
             ${{ env.PROJECT_DIR }}/android/app/build/outputs/logs/**
           if-no-files-found: warn
           retention-days: 14
-          
