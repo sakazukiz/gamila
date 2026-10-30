@@ -101,7 +101,7 @@ jobs:
           perm = '    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />'
           if "MANAGE_EXTERNAL_STORAGE" not in m:
               m = m.replace('    <uses-permission android:name="android.permission.INTERNET" />',
-                            '    <uses-permission android:name="android.permission.INTERNET" />\\n' + perm)
+                            '    <uses-permission android:name="android.permission.INTERNET" />\n' + perm)
           m = m.replace('android:name="org.libsdl.app.SDLActivity"',
                         'android:name="com.nfsu2.recomp.NFSU2Activity"')
           manifest.write_text(m)
@@ -137,7 +137,7 @@ jobs:
           """)
           main = root / "src/main.c"
           s = main.read_text()
-          old = '    if (!game_dir || !game_dir[0])\\n        game_dir = NFSU2_DEFAULT_GAME_DIR;'
+          old = '    if (!game_dir || !game_dir[0])\n        game_dir = NFSU2_DEFAULT_GAME_DIR;'
           new = '''    if (!game_dir || !game_dir[0]) {
           #if defined(__ANDROID__)
               if (access("/storage/emulated/0/NFSU2/default.xbe", R_OK) == 0)
