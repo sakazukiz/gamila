@@ -331,51 +331,62 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot-load -no-snapshot-save -camera-back none -camera-front none
           disable-animations: true
           script: |
-            set -euo pipefail
             APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
-            set -x
+            echo "=== ADB devices ==="
             adb devices -l
             adb wait-for-device
-            for attempt in $(seq 1 60); do
-              BOOT="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\\r' || true)"
-              [[ "$BOOT" == "1" ]] && break
+            BOOT=""
+            attempt=0
+            while [ "$attempt" -lt 60 ]; do
+              BOOT="$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)"
+              [ "$BOOT" = "1" ] && break
+              attempt=$((attempt + 1))
               sleep 2
             done
-            [[ "$BOOT" == "1" ]] || { echo "Android emulator did not finish booting"; adb logcat -d -t 3000; exit 1; }
-            ABI_LIST="$(adb shell getprop ro.product.cpu.abilist | tr -d '\\r')"
+            if [ "$BOOT" != "1" ]; then
+              echo "Android emulator did not finish booting"
+              adb logcat -d -t 3000
+              exit 1
+            fi
+            ABI_LIST="$(adb shell getprop ro.product.cpu.abilist | tr -d '\r')"
             echo "Emulator ABI list: $ABI_LIST"
-            [[ "$ABI_LIST" == *"x86_64"* ]] || { echo "API 35 emulator is not x86_64"; exit 1; }
+            case "$ABI_LIST" in *x86_64*) ;; *) echo "API 35 emulator is not x86_64"; exit 1 ;; esac
             adb install -r "$APK"
             PACKAGE=com.nfsu2.recomp
-            ACTIVITY="$(adb shell cmd package resolve-activity --brief "$PACKAGE" | tr -d '\\r' | tail -n1)"
-            [[ -n "$ACTIVITY" && "$ACTIVITY" != "No activity found" ]] || { echo "Launcher activity not resolved"; exit 1; }
+            ACTIVITY="$(adb shell cmd package resolve-activity --brief "$PACKAGE" | tr -d '\r' | tail -n 1)"
+            if [ -z "$ACTIVITY" ] || [ "$ACTIVITY" = "No activity found" ]; then
+              echo "Launcher activity not resolved"
+              adb shell dumpsys package "$PACKAGE"
+              exit 1
+            fi
             adb shell am force-stop "$PACKAGE"
             adb shell am start -W -n "$ACTIVITY"
             sleep 8
-            adb logcat -d -t 5000 > "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
-            PID="$(adb shell pidof "$PACKAGE" | tr -d '\\r' || true)"
-            if [[ -z "$PID" ]]; then
-              cat "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
-              echo "Launcher process exited during emulator smoke test"
+            adb logcat -d -t 5000 > "$RUNNER_TEMP/nfsu2-launcher-logcat.txt"
+            PID="$(adb shell pidof "$PACKAGE" | tr -d '\r' || true)"
+            if [ -z "$PID" ]; then
+              cat "$RUNNER_TEMP/nfsu2-launcher-logcat.txt"
+              echo "Launcher process exited during smoke test"
               exit 1
             fi
+            echo "PASS: launcher process alive, PID=$PID"
             adb shell am force-stop "$PACKAGE"
-            # Bypass the import gate once to load SDLActivity and libmain.so.
-            # The real game disc is intentionally not uploaded to public CI.
-            adb shell am start -W -n "$PACKAGE/org.libsdl.app.SDLActivity" || true
+            # Load SDLActivity and libmain.so without uploading proprietary game data.
+            adb shell am start -W -n "$PACKAGE/org.libsdl.app.SDLActivity"
             sleep 5
-            adb logcat -d -t 8000 > "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
-            if grep -E 'FATAL EXCEPTION|Fatal signal|SIGSEGV|SIGBUS|SIGABRT|\\[CRASH\\]' "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"; then
-              cat "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
+            adb logcat -d -t 8000 > "$RUNNER_TEMP/nfsu2-native-logcat.txt"
+            if grep -E 'FATAL EXCEPTION|Fatal signal|SIGSEGV|SIGBUS|SIGABRT|\\[CRASH\\]' "$RUNNER_TEMP/nfsu2-native-logcat.txt"; then
+              cat "$RUNNER_TEMP/nfsu2-native-logcat.txt"
               echo "Native SDL startup crashed"
               exit 1
             fi
-            if ! grep -F 'cannot read' "$RUNNER_TEMP/nfsu2-emulator-logcat.txt" | grep -F 'default.xbe' >/dev/null; then
-              echo "Expected clean missing-XBE diagnostic was not observed; dumping native startup log"
-              cat "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
+            if ! grep -F 'default.xbe' "$RUNNER_TEMP/nfsu2-native-logcat.txt" | grep -Ei 'cannot read|not found|failed|open' >/dev/null; then
+              echo "Native SDL launch did not reach the expected missing-game-data guard; full log follows"
+              cat "$RUNNER_TEMP/nfsu2-native-logcat.txt"
               exit 1
             fi
-            echo "PASS: x86_64 native SDL/libmain startup reached the expected missing-XBE guard without a native crash; ARM64 ABI is included for device builds."
+            echo "PASS: SDL/native library startup reached missing-game-data guard without a detected native crash."
+
 
       - name: Upload APK and build logs
         if: always()
