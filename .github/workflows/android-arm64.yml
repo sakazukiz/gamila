@@ -7,6 +7,7 @@ on:
       - 'NFSU2-Android-*.part*'
       - 'GITHUB_ACTIONS_BUILD.yml'
       - 'ci/android-runtime-hardening.patch.zlib.b64'
+      - 'ci/patch_android_xbox_address_map.py'
       - '.github/workflows/android-arm64.yml'
 
 permissions:
@@ -104,6 +105,12 @@ jobs:
           p.write_text(s)
           print("Patched", p)
           PY
+
+      - name: Harden Android Xbox virtual-address map
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/ci/patch_android_xbox_address_map.py" "$PROJECT_DIR"
 
       - name: Add Android SAF launcher and game import
         shell: bash
