@@ -242,6 +242,24 @@ jobs:
           print("Installed SAF launcher, folder validation and private-storage import")
           PYCODE
 
+      - name: Enable AndroidX for SAF document picker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$PROJECT_DIR/android/gradle.properties" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1])
+          p.parent.mkdir(parents=True, exist_ok=True)
+          s = p.read_text() if p.exists() else ""
+          for key in ("android.useAndroidX=true", "android.enableJetifier=true"):
+              name = key.split("=", 1)[0]
+              lines = [line for line in s.splitlines() if not line.startswith(name + "=")]
+              lines.append(key)
+              s = "\n".join(lines) + "\n"
+          p.write_text(s)
+          print("Enabled AndroidX in", p)
+          PY
+
       - name: Verify Android toolchain
         shell: bash
         run: |
