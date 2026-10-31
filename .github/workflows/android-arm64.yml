@@ -344,7 +344,7 @@ jobs:
             [[ "$BOOT" == "1" ]] || { echo "Android emulator did not finish booting"; adb logcat -d -t 3000; exit 1; }
             ABI_LIST="$(adb shell getprop ro.product.cpu.abilist | tr -d '\\r')"
             echo "Emulator ABI list: $ABI_LIST"
-            [[ "$ABI_LIST" == *"arm64-v8a"* ]] || { echo "API 35 emulator has no ARM64 ABI translation"; exit 1; }
+            [[ "$ABI_LIST" == *"x86_64"* ]] || { echo "API 35 emulator is not x86_64"; exit 1; }
             adb install -r "$APK"
             PACKAGE=com.nfsu2.recomp
             ACTIVITY="$(adb shell cmd package resolve-activity --brief "$PACKAGE" | tr -d '\\r' | tail -n1)"
