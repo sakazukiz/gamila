@@ -308,8 +308,21 @@ jobs:
           ls -lh "$APK"
           file "$APK"
 
-      - name: Android emulator smoke test (ARM64)
-        uses: reactivecircus/android-emulator-runner@v2
+      - name: Enable KVM permissions for Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -e /dev/kvm ]]; then
+            echo "GitHub runner does not expose /dev/kvm; hardware-accelerated emulator test is unavailable."
+            exit 1
+          fi
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+
+      - name: Android launcher smoke test (API 35 x86_64)\n        uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           target: google_apis
@@ -346,7 +359,7 @@ jobs:
               echo "Launcher process exited during emulator smoke test"
               exit 1
             fi
-            echo "PASS: ARM64 APK installed on API 35 x86_64 emulator with ARM ABI translation; launcher PID=$PID"
+            echo "PASS: APK installed and Java launcher remained alive on API 35 x86_64 emulator; native game runtime not yet tested."
 
       - name: Upload APK and build logs
         if: always()
