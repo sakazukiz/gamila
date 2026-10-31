@@ -308,7 +308,6 @@ jobs:
           EOF
           cmake -S "$PROJECT_DIR/xboxrecomp/tests/memory_layout_posix" \
             -B "$RUNNER_TEMP/memory-layout-test" -G Ninja \
-            -DANDROID=ON \
             -DCMAKE_C_FLAGS="-D__ANDROID__ -I$STUB" \
             -DCMAKE_BUILD_TYPE=Debug
           cmake --build "$RUNNER_TEMP/memory-layout-test" --target memory_layout_posix_test --parallel 2
