@@ -308,6 +308,38 @@ jobs:
           ls -lh "$APK"
           file "$APK"
 
+      - name: Android emulator smoke test (ARM64)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: arm64-v8a
+          profile: pixel_6
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+            adb install -r "$APK"
+            PACKAGE=com.nfsu2.recomp
+            ACTIVITY="$(adb shell cmd package resolve-activity --brief "$PACKAGE" | tr -d '\\r' | tail -n1)"
+            test -n "$ACTIVITY"
+            adb shell am force-stop "$PACKAGE"
+            adb shell monkey -p "$PACKAGE" 1
+            sleep 8
+            if ! adb shell pidof "$PACKAGE" >/dev/null; then
+              adb logcat -d -t 3000 > "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
+              cat "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
+              echo "Launcher process exited during emulator smoke test"
+              exit 1
+            fi
+            adb logcat -d -t 3000 > "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
+            if grep -E 'FATAL EXCEPTION|Fatal signal|SIGSEGV|SIGABRT' "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"; then
+              echo "Crash signature detected during launcher smoke test"
+              exit 1
+            fi
+            echo "PASS: ARM64 APK installed and launcher process stayed alive."
+
       - name: Upload APK and build logs
         if: always()
         uses: actions/upload-artifact@v4
