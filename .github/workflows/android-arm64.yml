@@ -260,6 +260,9 @@ jobs:
           print("Enabled AndroidX in", p)
           PY
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Verify Android toolchain
         shell: bash
         run: |
