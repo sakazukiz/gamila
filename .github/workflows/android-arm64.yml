@@ -112,6 +112,9 @@ jobs:
           </manifest>""")
           gradle = root / "android/app/build.gradle"
           g = gradle.read_text()
+          if "abiFilters 'arm64-v8a'" not in g:
+              raise SystemExit("Expected ARM64 ABI filter missing from build.gradle")
+          g = g.replace("abiFilters 'arm64-v8a'", "abiFilters 'arm64-v8a', 'x86_64'", 1)
           if "androidx.documentfile:documentfile" not in g:
               g += "\ndependencies { implementation 'androidx.documentfile:documentfile:1.0.1' }\n"
           gradle.write_text(g)
@@ -317,7 +320,6 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           sudo chmod 0666 /dev/kvm
           ls -l /dev/kvm
-          "$ANDROID_HOME/emulator/emulator" -accel-check
 
       - name: Android launcher smoke test (API 35 x86_64)
         uses: reactivecircus/android-emulator-runner@v2
@@ -357,7 +359,23 @@ jobs:
               echo "Launcher process exited during emulator smoke test"
               exit 1
             fi
-            echo "PASS: APK installed and Java launcher remained alive on API 35 x86_64 emulator; native game runtime not yet tested."
+            adb shell am force-stop "$PACKAGE"
+            # Bypass the import gate once to load SDLActivity and libmain.so.
+            # The real game disc is intentionally not uploaded to public CI.
+            adb shell am start -W -n "$PACKAGE/org.libsdl.app.SDLActivity" || true
+            sleep 5
+            adb logcat -d -t 8000 > "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
+            if grep -E 'FATAL EXCEPTION|Fatal signal|SIGSEGV|SIGBUS|SIGABRT|\\[CRASH\\]' "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"; then
+              cat "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
+              echo "Native SDL startup crashed"
+              exit 1
+            fi
+            if ! grep -F 'cannot read' "$RUNNER_TEMP/nfsu2-emulator-logcat.txt" | grep -F 'default.xbe' >/dev/null; then
+              echo "Expected clean missing-XBE diagnostic was not observed; dumping native startup log"
+              cat "$RUNNER_TEMP/nfsu2-emulator-logcat.txt"
+              exit 1
+            fi
+            echo "PASS: x86_64 native SDL/libmain startup reached the expected missing-XBE guard without a native crash; ARM64 ABI is included for device builds."
 
       - name: Upload APK and build logs
         if: always()
