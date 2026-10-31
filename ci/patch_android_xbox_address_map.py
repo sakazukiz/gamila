@@ -34,8 +34,7 @@ def patch_layout(path: Path) -> None:
         "#endif\n",
         "const size_t end", "Android full-span reservation")
     s = replace_once(s,
-        "        uintptr_t contig_native = XBOX_CONTIG_BASE + g_memory_offset;\n"
-        "        g_contig_mapping = CreateFileMappingW(\n",
+        "        uintptr_t contig_native = XBOX_CONTIG_BASE + g_memory_offset;\n",
         "        uintptr_t contig_native = XBOX_CONTIG_BASE + g_memory_offset;\n"
         "#if defined(__ANDROID__)\n"
         "        /* Release the reserved 64 MiB slice before installing its shared mapping. */\n"
