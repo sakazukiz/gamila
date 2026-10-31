@@ -331,37 +331,52 @@ jobs:
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot-load -no-snapshot-save -camera-back none -camera-front none
           disable-animations: true
           script: |
-            bash -euo pipefail -c '
-              APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
-              adb devices -l
-              adb wait-for-device
-              test "$(adb shell getprop sys.boot_completed | tr -d "\\r")" = "1"
-              ABI_LIST="$(adb shell getprop ro.product.cpu.abilist | tr -d "\\r")"
-              echo "Emulator ABI list: $ABI_LIST"
-              echo "$ABI_LIST" | grep -q x86_64
-              adb install -r "$APK"
-              PACKAGE=com.nfsu2.recomp
-              ACTIVITY="$(adb shell cmd package resolve-activity --brief "$PACKAGE" | tr -d "\\r" | tail -n 1)"
-              test -n "$ACTIVITY"
-              test "$ACTIVITY" != "No activity found"
-              adb shell am force-stop "$PACKAGE"
-              adb shell am start -W -n "$ACTIVITY"
-              sleep 8
-              PID="$(adb shell pidof "$PACKAGE" | tr -d "\\r")"
-              test -n "$PID"
-              echo "PASS: launcher process alive, PID=$PID"
-              adb shell am force-stop "$PACKAGE"
-              adb shell am start -W -n "$PACKAGE/org.libsdl.app.SDLActivity"
-              sleep 5
-              adb logcat -d -t 8000 > "$RUNNER_TEMP/nfsu2-native-logcat.txt"
-              if grep -E "FATAL EXCEPTION|Fatal signal|SIGSEGV|SIGBUS|SIGABRT|\\\\[CRASH\\\\]" "$RUNNER_TEMP/nfsu2-native-logcat.txt"; then
-                cat "$RUNNER_TEMP/nfsu2-native-logcat.txt"
-                echo "Native SDL startup crashed"
-                exit 1
-              fi
-              grep -F "default.xbe" "$RUNNER_TEMP/nfsu2-native-logcat.txt" | grep -Ei "cannot read|not found|failed|open"
-              echo "PASS: native SDL reached missing-game-data guard without detected crash."
-            '
+            set -eu
+            APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
+            adb devices -l
+            adb wait-for-device
+            BOOT="$(adb shell getprop sys.boot_completed | tr -d '\r')"
+            if [ "$BOOT" != "1" ]; then
+              echo "Emulator has not completed boot"
+              adb logcat -d -t 3000
+              exit 1
+            fi
+            ABI_LIST="$(adb shell getprop ro.product.cpu.abilist | tr -d '\r')"
+            echo "Emulator ABI list: $ABI_LIST"
+            echo "$ABI_LIST" | grep -q 'x86_64'
+            adb install -r "$APK"
+            PACKAGE="com.nfsu2.recomp"
+            ACTIVITY="$(adb shell cmd package resolve-activity --brief "$PACKAGE" | tr -d '\r' | tail -n 1)"
+            if [ -z "$ACTIVITY" ] || [ "$ACTIVITY" = "No activity found" ]; then
+              echo "Launcher activity not resolved"
+              adb shell dumpsys package "$PACKAGE"
+              exit 1
+            fi
+            adb shell am force-stop "$PACKAGE"
+            adb shell am start -W -n "$ACTIVITY"
+            sleep 8
+            PID="$(adb shell pidof "$PACKAGE" | tr -d '\r')"
+            if [ -z "$PID" ]; then
+              adb logcat -d -t 5000
+              echo "Launcher process exited"
+              exit 1
+            fi
+            echo "PASS: launcher process alive, PID=$PID"
+            adb shell am force-stop "$PACKAGE"
+            adb shell am start -W -n "$PACKAGE/org.libsdl.app.SDLActivity"
+            sleep 5
+            adb logcat -d -t 8000 > "$RUNNER_TEMP/nfsu2-native-logcat.txt"
+            if grep -E 'FATAL EXCEPTION|Fatal signal|SIGSEGV|SIGBUS|SIGABRT|\\[CRASH\\]' "$RUNNER_TEMP/nfsu2-native-logcat.txt"; then
+              cat "$RUNNER_TEMP/nfsu2-native-logcat.txt"
+              echo "Native SDL startup crashed"
+              exit 1
+            fi
+            if ! grep -F 'default.xbe' "$RUNNER_TEMP/nfsu2-native-logcat.txt" | grep -Ei 'cannot read|not found|failed|open'; then
+              cat "$RUNNER_TEMP/nfsu2-native-logcat.txt"
+              echo "Native startup did not reach missing-game-data guard"
+              exit 1
+            fi
+            echo "PASS: SDL/native startup reached missing-game-data guard without detected crash."
 
 
       - name: Upload APK and build logs
