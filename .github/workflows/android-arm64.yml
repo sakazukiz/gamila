@@ -89,70 +89,158 @@ jobs:
           print("Patched", p)
           PY
 
-      - name: Add Android game-folder access
+      - name: Add Android SAF launcher and game import
         shell: bash
         run: |
           set -euo pipefail
-          python3 - "$PROJECT_DIR" <<'PY'
+          python3 - "$PROJECT_DIR" <<'PYCODE'
           import pathlib, sys
           root = pathlib.Path(sys.argv[1])
           manifest = root / "android/app/src/main/AndroidManifest.xml"
-          m = manifest.read_text()
-          perm = '    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />'
-          if "MANAGE_EXTERNAL_STORAGE" not in m:
-              m = m.replace('    <uses-permission android:name="android.permission.INTERNET" />',
-                            '    <uses-permission android:name="android.permission.INTERNET" />\n' + perm)
-          m = m.replace('android:name="org.libsdl.app.SDLActivity"',
-                        'android:name="com.nfsu2.recomp.NFSU2Activity"')
-          manifest.write_text(m)
-          java = root / "android/app/src/main/java/com/nfsu2/recomp/NFSU2Activity.java"
+          manifest.write_text("""<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+              <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+              <uses-permission android:name="android.permission.INTERNET" />
+              <application android:label="NFS Underground 2" android:hasCode="true"
+                  android:allowBackup="false" android:theme="@android:style/Theme.Material.NoActionBar">
+                  <activity android:name="com.nfsu2.recomp.LauncherActivity" android:exported="true">
+                      <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+                  </activity>
+                  <activity android:name="org.libsdl.app.SDLActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|uiMode|density|navigation"
+                      android:exported="false" android:screenOrientation="sensorLandscape" />
+              </application>
+          </manifest>""")
+          gradle = root / "android/app/build.gradle"
+          g = gradle.read_text()
+          if "androidx.documentfile:documentfile" not in g:
+              g += "\ndependencies { implementation 'androidx.documentfile:documentfile:1.0.1' }\n"
+          gradle.write_text(g)
+          java = root / "android/app/src/main/java/com/nfsu2/recomp/LauncherActivity.java"
           java.parent.mkdir(parents=True, exist_ok=True)
-          java.write_text("""package com.nfsu2.recomp;
+          java.write_text(r'''package com.nfsu2.recomp;
+
+          import android.app.Activity;
           import android.app.AlertDialog;
           import android.content.Intent;
           import android.net.Uri;
-          import android.os.Build;
           import android.os.Bundle;
-          import android.os.Environment;
-          import android.provider.Settings;
-          import org.libsdl.app.SDLActivity;
-          public class NFSU2Activity extends SDLActivity {
-              @Override protected void onCreate(Bundle state) {
+          import android.view.Gravity;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+          import androidx.documentfile.provider.DocumentFile;
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.InputStream;
+          import java.io.OutputStream;
+          import java.util.concurrent.ExecutorService;
+          import java.util.concurrent.Executors;
+
+          public final class LauncherActivity extends Activity {
+              private static final int PICK_GAME_FOLDER = 7102;
+              private final ExecutorService worker = Executors.newSingleThreadExecutor();
+              private TextView status;
+              private Button start;
+              private File gameDir;
+
+              @Override public void onCreate(Bundle state) {
                   super.onCreate(state);
-                  if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
-                      new AlertDialog.Builder(this)
-                          .setTitle("Akses folder game diperlukan")
-                          .setMessage("Izinkan akses semua file agar NFSU2 dapat membaca /storage/emulated/0/NFSU2/default.xbe. Setelah memberi izin, buka ulang game.")
-                          .setCancelable(false)
-                          .setPositiveButton("Buka pengaturan", (d, w) -> {
-                              Intent i = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                                  Uri.parse("package:" + getPackageName()));
-                              startActivity(i);
-                          })
-                          .setNegativeButton("Nanti", (d, w) -> {})
-                          .show();
+                  gameDir = new File(getFilesDir(), "game");
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setGravity(Gravity.CENTER);
+                  root.setPadding(32, 32, 32, 32);
+                  root.setBackgroundColor(0xff101820);
+                  TextView title = new TextView(this);
+                  title.setText("NEED FOR SPEED\\nUNDERGROUND 2");
+                  title.setTextColor(0xffffffff); title.setTextSize(26); title.setGravity(Gravity.CENTER);
+                  root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+                  status = new TextView(this); status.setTextColor(0xffdddddd); status.setTextSize(14);
+                  status.setGravity(Gravity.CENTER); status.setPadding(0, 24, 0, 24);
+                  root.addView(status, new LinearLayout.LayoutParams(-1, -2));
+                  Button pick = new Button(this); pick.setText("IMPORT FOLDER NFSU2");
+                  root.addView(pick, new LinearLayout.LayoutParams(-1, -2));
+                  start = new Button(this); start.setText("START GAME");
+                  root.addView(start, new LinearLayout.LayoutParams(-1, -2));
+                  setContentView(root);
+                  pick.setOnClickListener(v -> chooseFolder());
+                  start.setOnClickListener(v -> launchGame());
+                  refreshState();
+              }
+
+              private void refreshState() {
+                  boolean valid = new File(gameDir, "default.xbe").isFile();
+                  start.setEnabled(valid);
+                  status.setText(valid ? "Folder game siap. Tekan START GAME." : "Import folder hasil ekstrak NFSU2 yang berisi default.xbe.");
+              }
+
+              private void chooseFolder() {
+                  Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                  i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                  startActivityForResult(i, PICK_GAME_FOLDER);
+              }
+
+              @Override protected void onActivityResult(int request, int result, Intent data) {
+                  super.onActivityResult(request, result, data);
+                  if (request != PICK_GAME_FOLDER || result != RESULT_OK || data == null || data.getData() == null) return;
+                  Uri tree = data.getData();
+                  try { getContentResolver().takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); }
+                  catch (SecurityException e) { status.setText("Izin folder tidak dapat disimpan: " + e.getMessage()); return; }
+                  DocumentFile source = DocumentFile.fromTreeUri(this, tree);
+                  DocumentFile xbe = source == null ? null : source.findFile("default.xbe");
+                  if (xbe == null || !xbe.isFile()) {
+                      new AlertDialog.Builder(this).setMessage("Folder tidak valid. Pilih folder yang langsung berisi default.xbe.").setPositiveButton("OK", null).show();
+                      return;
+                  }
+                  start.setEnabled(false);
+                  status.setText("Menyalin file game ke penyimpanan aplikasi. Jangan tutup aplikasi...");
+                  worker.execute(() -> {
+                      try {
+                          if (gameDir.exists()) deleteTree(gameDir);
+                          if (!gameDir.mkdirs() && !gameDir.isDirectory()) throw new Exception("Tidak dapat membuat folder game");
+                          copyTree(source, gameDir);
+                          if (!new File(gameDir, "default.xbe").isFile()) throw new Exception("default.xbe tidak ditemukan setelah penyalinan");
+                          runOnUiThread(() -> { status.setText("Import selesai."); refreshState(); });
+                      } catch (Exception e) {
+                          runOnUiThread(() -> { status.setText("Import gagal: " + e.getMessage()); refreshState(); });
+                      }
+                  });
+              }
+
+              private void copyTree(DocumentFile source, File target) throws Exception {
+                  if (source.isDirectory()) {
+                      if (!target.exists() && !target.mkdirs()) throw new Exception("Gagal membuat folder " + target.getName());
+                      for (DocumentFile child : source.listFiles()) {
+                          String name = child.getName();
+                          if (name == null || name.equals(".") || name.equals("..")) continue;
+                          copyTree(child, new File(target, name));
+                      }
+                  } else if (source.isFile()) {
+                      try (InputStream in=getContentResolver().openInputStream(source.getUri());
+                           OutputStream out=new FileOutputStream(target)) {
+                          if (in == null) throw new Exception("Tidak bisa membaca " + source.getName());
+                          byte[] buffer=new byte[1024*1024]; int n;
+                          while ((n=in.read(buffer)) != -1) if (n > 0) out.write(buffer,0,n);
+                      }
                   }
               }
+
+              private static void deleteTree(File f) {
+                  if (f.isDirectory()) { File[] children=f.listFiles(); if (children != null) for (File c:children) deleteTree(c); }
+                  //noinspection ResultOfMethodCallIgnored
+                  f.delete();
+              }
+
+              private void launchGame() {
+                  if (!new File(gameDir, "default.xbe").isFile()) { refreshState(); return; }
+                  startActivity(new Intent(this, org.libsdl.app.SDLActivity.class));
+              }
+
+              @Override protected void onDestroy() { worker.shutdown(); super.onDestroy(); }
           }
-          """)
-          main = root / "src/main.c"
-          s = main.read_text()
-          old = '    if (!game_dir || !game_dir[0])\n        game_dir = NFSU2_DEFAULT_GAME_DIR;'
-          new = '''    if (!game_dir || !game_dir[0]) {
-          #if defined(__ANDROID__)
-              if (access("/storage/emulated/0/NFSU2/default.xbe", R_OK) == 0)
-                  game_dir = "/storage/emulated/0/NFSU2";
-              else
-          #endif
-                  game_dir = NFSU2_DEFAULT_GAME_DIR;
-          }'''
-          if old in s:
-              s = s.replace(old, new, 1)
-          elif '"/storage/emulated/0/NFSU2/default.xbe"' not in s:
-              raise SystemExit("Could not locate Android game directory fallback in src/main.c")
-          main.write_text(s)
-          print("Added MANAGE_EXTERNAL_STORAGE prompt and /NFSU2 lookup")
-          PY
+          ''')
+          print("Installed SAF launcher, folder validation and private-storage import")
+          PYCODE
 
       - name: Verify Android toolchain
         shell: bash
