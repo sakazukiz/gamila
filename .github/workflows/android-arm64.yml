@@ -183,7 +183,7 @@ jobs:
                   root.addView(start, new LinearLayout.LayoutParams(-1, -2));
                   setContentView(root);
                   // CI-only path: exercise the same private SDLActivity launch used by START GAME.
-                  if (BuildConfig.DEBUG &&
+                  if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
                       getIntent().getBooleanExtra("com.nfsu2.recomp.CI_SMOKE_NATIVE", false)) {
                       root.postDelayed(() -> startActivity(
                           new Intent(LauncherActivity.this, org.libsdl.app.SDLActivity.class)), 750);
