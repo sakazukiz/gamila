@@ -9,7 +9,13 @@ def replace_once(source: str, anchor: str, replacement: str, marker: str, label:
         return source
     count = source.count(anchor)
     if count != 1:
-        raise SystemExit(f"{label}: expected one anchor, found {count}")
+        detail = ""
+        if label == "release reserved contiguous slot":
+            lo = source.find("Contiguous / physical memory window")
+            hi = source.find("NV2A hardware register aperture", lo + 1)
+            if lo >= 0 and hi > lo:
+                detail = "\\n--- actual contiguous mapping source ---\\n" + source[lo:hi]
+        raise SystemExit(f"{label}: expected one anchor, found {count}{detail}")
     return source.replace(anchor, replacement, 1)
 
 
